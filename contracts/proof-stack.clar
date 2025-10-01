@@ -121,3 +121,89 @@
     )
   )
 )
+
+;; Verify contribution authenticity and assign merit score
+;; @param contribution-id: ID of contribution to verify
+;; @param score: Merit points awarded (influences tier progression)
+(define-public (verify-contribution
+    (contribution-id uint)
+    (score uint)
+  )
+  (let ((contribution (unwrap! (map-get? Contributions contribution-id) ERR-NOT-FOUND)))
+    (begin
+      (asserts! (default-to false (map-get? project-admins tx-sender))
+        ERR-OWNER-ONLY
+      )
+      (asserts! (not (get verified contribution)) ERR-ALREADY-VERIFIED)
+
+      ;; Mark contribution as verified with assigned score
+      (map-set Contributions contribution-id
+        (merge contribution {
+          score: score,
+          verified: true,
+        })
+      )
+
+      ;; Update contributor's cumulative reputation
+      (match (map-get? Contributors (get contributor contribution))
+        prev-profile (begin
+          (map-set Contributors (get contributor contribution)
+            (merge prev-profile { total-score: (+ (get total-score prev-profile) score) })
+          )
+          (ok true)
+        )
+        ERR-NOT-FOUND
+      )
+    )
+  )
+)
+
+;; Recalculate and update contributor's tier based on total score
+;; @param contributor: Principal whose tier should be updated
+(define-public (update-contributor-tier (contributor principal))
+  (match (map-get? Contributors contributor)
+    profile (let ((total-score (get total-score profile)))
+      (begin
+        (map-set Contributors contributor
+          (merge profile { tier: (if (>= total-score PLATINUM-THRESHOLD)
+            PLATINUM
+            (if (>= total-score GOLD-THRESHOLD)
+              GOLD
+              (if (>= total-score SILVER-THRESHOLD)
+                SILVER
+                BRONZE
+              )
+            )
+          ) }
+          ))
+        (ok true)
+      )
+    )
+    ERR-NOT-FOUND
+  )
+)
+
+;; Read-Only Functions
+
+;; Retrieve contribution details by ID
+(define-read-only (get-contribution (contribution-id uint))
+  (map-get? Contributions contribution-id)
+)
+
+;; Get complete contributor profile and reputation data
+(define-read-only (get-contributor-profile (contributor principal))
+  (map-get? Contributors contributor)
+)
+
+;; Query current tier level for a contributor
+(define-read-only (get-contributor-tier (contributor principal))
+  (match (map-get? Contributors contributor)
+    profile (ok (get tier profile))
+    ERR-NOT-FOUND
+  )
+)
+
+;; Check if an address has admin verification privileges
+(define-read-only (is-project-admin (address principal))
+  (default-to false (map-get? project-admins address))
+)
